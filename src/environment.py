@@ -40,14 +40,18 @@ class PokerEnvironment:
         self.showdown = False  # flag that can be used to reveal opponents cards if needed
 
         # FIXED BALANCES
-        self.new_player_balance = 2500
-        self.SMALL_BLIND = 100
-        self.BIG_BLIND = 200
+        self.new_player_balance = 400
+        self.SMALL_BLIND = 1
+        self.BIG_BLIND = 2
 
         self.input_cards = input_cards
 
         self.history = []
         self.players_balance_history = []  # List of "n" list for "n" players
+
+        # Bounty 
+        self.bounties = [None, None]  # Bounties for each player
+        self.bounty_round_counter = 0  # Counter for bounty updates
 
     def add_player(self):
         self.players.append(Player(self.new_player_balance))
@@ -77,17 +81,35 @@ class PokerEnvironment:
 
         return winning_players
 
-    def distribute_pot_to_winning_players(self):  # Run when self.game_stage = 5
+    def distribute_pot_to_winning_players(self):
         assert self.game_stage == 6
         winning_players = self.get_winning_players()
-
-        pot_winning = self.total_pot_balance / len(winning_players)
-        for player in winning_players:
-            player.player_balance += pot_winning
-
-        # Used for graphing later
+        
+        if len(winning_players) == 1:
+            winner = winning_players[0]
+            normal_winnings = self.total_pot_balance / 2  # Opponent's bet
+            
+            if self.player_hit_bounty(winner):
+                bounty_winnings = 1.5 * normal_winnings + 10
+                winner.player_balance += bounty_winnings
+            else:
+                winner.player_balance += normal_winnings
+        
+        elif len(winning_players) == 2:  # Split pot
+            if self.player_hit_bounty(winning_players[0]) and not self.player_hit_bounty(winning_players[1]):
+                bounty_winnings = self.total_pot_balance / 4 + 10
+                winning_players[0].player_balance += bounty_winnings
+                winning_players[1].player_balance += self.total_pot_balance / 2 - bounty_winnings
+            elif self.player_hit_bounty(winning_players[1]) and not self.player_hit_bounty(winning_players[0]):
+                bounty_winnings = self.total_pot_balance / 4 + 10
+                winning_players[1].player_balance += bounty_winnings
+                winning_players[0].player_balance += self.total_pot_balance / 2 - bounty_winnings
+            else:
+                for player in winning_players:
+                    player.player_balance += self.total_pot_balance / 2
+        
+        # Update balance history
         for idx, player in enumerate(self.players):
-            # TODO: To be changed if you want to keep the balance history until the very end
             try:
                 self.players_balance_history[idx].append(
                     int(player.player_balance - self.new_player_balance)
@@ -97,6 +119,11 @@ class PokerEnvironment:
                 self.players_balance_history[idx].append(
                     int(player.player_balance - self.new_player_balance)
                 )
+
+    def player_hit_bounty(self, player):
+        bounty_rank = self.bounties[self.players.index(player)]
+        return any(card.rank == bounty_rank for card in player.hand + self.community_cards)
+
 
     def valid_actions(self):
         """
@@ -132,6 +159,15 @@ class PokerEnvironment:
             player.clear_hand()
             player.player_balance = self.new_player_balance
 
+        # Reset player balances
+        for player in self.players:
+            player.player_balance = self.new_player_balance
+    
+        # Update bounties every 25 rounds
+        self.bounty_round_counter += 1
+        if self.bounty_round_counter % 25 == 0:
+            self.update_bounties()
+
         # Reset Deck (shuffles it as well), reset pot size
         self.deck.reset_deck()
         self.community_cards = []
@@ -148,6 +184,11 @@ class PokerEnvironment:
         # Proceed to preflop
         self.game_stage = 1
         self.move_to_next_game_stage()
+    
+    def update_bounties(self):
+        for i in range(2):
+            self.bounties[i] = self.deck.draw_random_rank()
+
 
     def get_highest_current_bet(self):
         highest_bet = 0
@@ -369,11 +410,15 @@ class PokerEnvironment:
                     else:
                         player.trash_talk_lose()
 
-        else:
-            for player in self.players:
-                if player.is_AI:
-                    if player.playing_current_round:
-                        player.trash_talk_fold()
+        if self.count_remaining_players_in_round() == 1:
+            winner = next(player for player in self.players if player.playing_current_round)
+            normal_winnings = self.total_pot_balance / 2  # Opponent's bet
+            
+            if self.player_hit_bounty(winner):
+                bounty_winnings = 1.5 * normal_winnings + 10
+                winner.player_balance += bounty_winnings
+            else:
+                winner.player_balance += normal_winnings
 
         self.game_stage = 6  # mark end of round
         self.distribute_pot_to_winning_players()
